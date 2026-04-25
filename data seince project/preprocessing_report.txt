@@ -1,0 +1,42 @@
+======================================================================
+SOFTWARE DEFECT DATASET - DATA PREPROCESSING REPORT
+======================================================================
+
+DATASET OVERVIEW:
+  - Original Dataset Shape: (1000, 11)
+  - Total Features: 10
+  - Total Samples: 1000
+  - Target Variable: DEFECT_LABEL
+
+STEP 1: MISSING VALUES HANDLING
+  - Introduced ~6% missing values in 5 columns: LOC, CYCLO, VOLUME, DIFFICULTY, NUM_OPERATORS
+  - Handling Method: Median Imputation
+  - Result: All missing values successfully imputed
+
+STEP 2: OUTLIERS HANDLING
+  - Introduced extreme outliers in 3 columns: LOC, VOLUME, BRANCH_COUNT
+  - Handling Method: IQR-based Capping (Winsorization)
+  - Formula: Lower = Q1 - 1.5*IQR, Upper = Q3 + 1.5*IQR
+  - Result: Outliers capped to bounds
+
+STEP 3: CORRELATION ANALYSIS
+  - Method: Pearson Correlation Matrix
+  - Finding: No highly correlated pairs (|r| > 0.7) found
+  - Top Correlated with DEFECT_LABEL: NUM_OPERANDS (r=-0.069), BRANCH_COUNT (r=0.064), VOLUME (r=-0.041)
+
+STEP 4: FEATURE SELECTION
+  - Methods: ANOVA F-test, Mutual Information, Random Forest Feature Importance
+  - Top 7 Selected Features: VOLUME, BRANCH_COUNT, NUM_OPERANDS, LOC, DIFFICULTY, LENGTH, NUM_OPERATORS
+  - Final Dataset Shape: (1000, 7)
+
+FILES GENERATED:
+  - 01_missing_values_before.png
+  - 02_missing_values_after.png
+  - 03_outliers_before.png
+  - 04_outliers_after.png
+  - 05_correlation_heatmap.png
+  - 06_target_correlation.png
+  - 07_feature_selection_comparison.png
+  - 08_top_features.png
+  - preprocessing_report.txt
+======================================================================
