@@ -2,190 +2,262 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import MinMaxScaler
+from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (12, 8)
-plt.rcParams['font.size'] = 10
+# Set visualization style
+plt.style.use('seaborn-v0_8-whitegrid')
+sns.set_palette("husl")
 
-df_original = pd.read_csv('SoftwareDefectDataset.csv')
-print(f"\nDataset Loaded: {df_original.shape}")
-print(df_original.head())
+print("SOFTWARE DEFECT DATASET PREPROCESSING PIPELINE")
 
-# STEP 1: MISSING VALUES
+# STEP 1: LOAD AND EXPLORE DATA
 
-print("STEP 1: MISSING VALUES HANDLING")
+print("STEP 1: DATA LOADING AND EXPLORATION")
 
-df_missing = df_original.copy()
-np.random.seed(42)
-columns_to_affect = ['LOC', 'CYCLO', 'VOLUME', 'DIFFICULTY', 'NUM_OPERATORS']
+# Load the dataset
+data_path = "SoftwareDefectDataset.csv"
+df = pd.read_csv(data_path)
 
-for col in columns_to_affect:
-    missing_indices = np.random.choice(df_missing.index, size=int(len(df_missing) * 0.06), replace=False)
-    df_missing.loc[missing_indices, col] = np.nan
-
-print(f"\nMissing Values Introduced:\n{df_missing.isnull().sum()[df_missing.isnull().sum() > 0]}")
-
-fig, ax = plt.subplots(figsize=(12, 6))
-sns.heatmap(df_missing.isnull(), cbar=True, yticklabels=False, cmap='viridis', ax=ax)
-ax.set_title('Missing Values BEFORE Handling', fontsize=14, fontweight='bold')
-plt.tight_layout()
-plt.savefig('01_missing_values_before.png', dpi=150, bbox_inches='tight')
-plt.show()
-
-df_handled = df_missing.copy()
-for col in columns_to_affect:
-    df_handled[col].fillna(df_handled[col].median(), inplace=True)
-
-print(f"\nMissing Values After Handling:\n{df_handled.isnull().sum()}")
-
-fig, ax = plt.subplots(figsize=(12, 6))
-sns.heatmap(df_handled.isnull(), cbar=True, yticklabels=False, cmap='viridis', ax=ax)
-ax.set_title('Missing Values AFTER Handling', fontsize=14, fontweight='bold')
-plt.tight_layout()
-plt.savefig('02_missing_values_after.png', dpi=150, bbox_inches='tight')
-plt.show()
+print(f"\nFirst 5 Rows:")
+print(df.head())
 
 
-# STEP 2: OUTLIERS
-print("STEP 2: OUTLIERS HANDLING")
+# STEP 2: PREPROCESSING
 
-df_outliers = df_handled.copy()
-outlier_columns = ['LOC', 'VOLUME', 'BRANCH_COUNT']
-np.random.seed(123)
+print("STEP 2: PREPROCESSING")
 
-for col in outlier_columns:
-    num_outliers = np.random.randint(3, 6)
-    outlier_indices = np.random.choice(df_outliers.index, size=num_outliers, replace=False)
-    max_val = df_outliers[col].max()
-    min_val = df_outliers[col].min()
-    for idx in outlier_indices:
-        if np.random.rand() > 0.5:
-            df_outliers.loc[idx, col] = max_val * np.random.uniform(5, 10)
-        else:
-            df_outliers.loc[idx, col] = min_val * np.random.uniform(-5, -2)
+# 2.1 Check for missing values
+print("\n2.1 Checking Missing Values:")
+missing_values = df.isnull().sum()
+total_missing = missing_values.sum()
+print(f"Total Missing Values: {total_missing}")
+if total_missing > 0:
+    print("Missing values detected:")
+    print(missing_values[missing_values > 0])
+else:
+    print("No missing values detected!")
 
-print(f"\nOutliers introduced in: {outlier_columns}")
+# 2.2 Check for duplicate rows
+print("\n2.2 Checking Duplicate Rows:")
+duplicates = df.duplicated().sum()
+print(f"Duplicate Rows: {duplicates}")
+if duplicates > 0:
+    df = df.drop_duplicates()
+    print(f" Removed {duplicates} duplicate rows. New shape: {df.shape}")
+else:
+    print(" No duplicate rows found!")
 
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-for i, col in enumerate(outlier_columns):
-    axes[i].boxplot(df_outliers[col].dropna(), vert=True)
-    axes[i].set_title(f'{col} BEFORE Handling', fontsize=12, fontweight='bold')
-    axes[i].grid(True, alpha=0.3)
-plt.suptitle('Outliers BEFORE Handling', fontsize=14, fontweight='bold')
-plt.tight_layout()
-plt.savefig('03_outliers_before.png', dpi=150, bbox_inches='tight')
-plt.show()
+# 2.3 Check data distribution
+print("\n2.3 Data Distribution Check:")
+print("Value counts for target variable (DEFECT_LABEL):")
+print(df['DEFECT_LABEL'].value_counts())
+print(f"\nClass Distribution:")
+print(f"  - Non-defective (0): {(df['DEFECT_LABEL'] == 0).sum()} ({(df['DEFECT_LABEL'] == 0).mean()*100:.2f}%)")
+print(f"  - Defective (1): {(df['DEFECT_LABEL'] == 1).sum()} ({(df['DEFECT_LABEL'] == 1).mean()*100:.2f}%)")
 
-df_clean = df_outliers.copy()
-for col in df_clean.columns[:-1]:
-    Q1 = df_clean[col].quantile(0.25)
-    Q3 = df_clean[col].quantile(0.75)
+# STEP 3: OUTLIER DETECTION AND HANDLING
+
+print("STEP 3: OUTLIER DETECTION AND HANDLING")
+
+# Function to detect outliers using IQR method
+def detect_outliers_iqr(data, column):
+    Q1 = data[column].quantile(0.25)
+    Q3 = data[column].quantile(0.75)
     IQR = Q3 - Q1
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
-    df_clean.loc[df_clean[col] < lower_bound, col] = lower_bound
-    df_clean.loc[df_clean[col] > upper_bound, col] = upper_bound
+    outliers = data[(data[column] < lower_bound) | (data[column] > upper_bound)]
+    return outliers, lower_bound, upper_bound
 
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-for i, col in enumerate(outlier_columns):
-    axes[i].boxplot(df_clean[col].dropna(), vert=True)
-    axes[i].set_title(f'{col} AFTER Handling', fontsize=12, fontweight='bold')
-    axes[i].grid(True, alpha=0.3)
-plt.suptitle('Outliers AFTER Handling', fontsize=14, fontweight='bold')
+# Function to detect outliers using Z-score method
+def detect_outliers_zscore(data, column, threshold=3):
+    z_scores = np.abs(stats.zscore(data[column]))
+    outliers = data[z_scores > threshold]
+    return outliers, z_scores
+
+# Get feature columns (exclude target)
+feature_columns = df.columns[:-1].tolist()
+target_column = 'DEFECT_LABEL'
+
+print("\n3.1 Outlier Detection using IQR Method:")
+
+outlier_summary = {}
+for col in feature_columns:
+    outliers, lower, upper = detect_outliers_iqr(df, col)
+    outlier_count = len(outliers)
+    outlier_summary[col] = outlier_count
+    if outlier_count > 0:
+        print(f"  {col}: {outlier_count} outliers (range: {lower:.4f} - {upper:.4f})")
+
+total_outliers = sum(outlier_summary.values())
+print(f"\nTotal outliers detected: {total_outliers}")
+
+# 3.2 Outlier Handling Options
+print("\n3.2 Outlier Handling:")
+print("  1. Remove outliers")
+
+# Create a copy for handling
+df_processed = df.copy()
+
+# Apply winsorization to handle outliers
+for col in feature_columns:
+    lower_percentile = df_processed[col].quantile(0.05)
+    upper_percentile = df_processed[col].quantile(0.95)
+    df_processed[col] = np.clip(df_processed[col], lower_percentile, upper_percentile)
+
+print(" Outliers handled using winsorization method")
+
+# Show comparison
+print("\n3.3 Before vs After Outlier Handling:")
+print("-" * 50)
+comparison = pd.DataFrame({
+    'Before': df[feature_columns].std(),
+    'After': df_processed[feature_columns].std()
+})
+print(comparison)
+
+# STEP 4: CORRELATION ANALYSIS
+
+print("STEP 4: CORRELATION ANALYSIS")
+
+# Calculate correlation matrix
+correlation_matrix = df_processed.corr()
+
+print("\n4.1 Correlation with Target Variable (DEFECT_LABEL):")
+target_correlations = correlation_matrix['DEFECT_LABEL'].drop('DEFECT_LABEL').sort_values(ascending=False)
+print(target_correlations)
+
+# Identify highly correlated features
+print("\n4.2 Highly Correlated Feature Pairs (|r| > 0.7):")
+for i in range(len(feature_columns)):
+    for j in range(i+1, len(feature_columns)):
+        corr = correlation_matrix.iloc[i, j]
+        if abs(corr) > 0.7:
+            print(f"  {feature_columns[i]} ↔ {feature_columns[j]}: {corr:.4f}")
+
+# STEP 5: FEATURE SELECTION
+
+print("STEP 5: FEATURE SELECTION")
+
+# 5.1 Correlation-based feature selection
+print("\n5.1 Correlation-Based Feature Selection:")
+print("Features ranked by correlation with target:")
+ranked_features = target_correlations.abs().sort_values(ascending=False)
+for i, (feature, corr) in enumerate(ranked_features.items(), 1):
+    direction = "+" if target_correlations[feature] > 0 else "-"
+    print(f"  {i}. {feature}: {target_correlations[feature]:.4f} ({direction})")
+
+# 5.2 Select features with significant correlation (|r| > 0.1)
+significant_features = ranked_features[ranked_features > 0.1].index.tolist()
+print(f"\n5.2 Selected Features (|correlation| > 0.1):")
+print(f"  {significant_features}")
+print(f"  Total selected: {len(significant_features)} out of {len(feature_columns)}")
+
+# 5.3 Feature importance using statistical tests
+print("\n5.3 Statistical Feature Importance:")
+
+# Point-biserial correlation for binary target
+from scipy.stats import pointbiserialr
+
+feature_importance = {}
+for col in feature_columns:
+    corr, p_value = pointbiserialr(df_processed[col], df_processed[target_column])
+    feature_importance[col] = {'correlation': corr, 'p_value': p_value}
+
+importance_df = pd.DataFrame(feature_importance).T
+importance_df = importance_df.sort_values('p_value')
+print(importance_df)
+
+# STEP 6: VISUALIZATION
+
+
+print("STEP 6: VISUALIZATION")
+
+# Create multiple subplots for comprehensive visualization
+fig = plt.figure(figsize=(20, 30))
+
+# 6.1 Data Distribution Histograms
+print("\n6.1 Creating Distribution Plots...")
+ax1 = fig.add_subplot(4, 2, 1)
+df_processed.hist(bins=30, ax=ax1, figsize=(16, 20))
+ax1.set_title('Feature Distributions (Histograms)', fontsize=14, fontweight='bold')
 plt.tight_layout()
-plt.savefig('04_outliers_after.png', dpi=150, bbox_inches='tight')
-plt.show()
+plt.savefig('distribution_histograms.png', dpi=150, bbox_inches='tight')
+print("Saved: distribution_histograms.png")
 
-# STEP 3: CORRELATION
-
-print("STEP 3: CORRELATION ANALYSIS")
-
-correlation_matrix = df_clean.corr()
-print("\nCorrelation Matrix:")
-print(correlation_matrix.round(3))
-
-fig, ax = plt.subplots(figsize=(14, 10))
-mask = np.triu(np.ones_like(correlation_matrix, dtype=bool))
-sns.heatmap(correlation_matrix, annot=True, fmt='.2f', cmap='RdBu_r', center=0,
-            square=True, linewidths=0.5, cbar_kws={"shrink": 0.8}, mask=mask, ax=ax)
-ax.set_title('Correlation Matrix Heatmap', fontsize=14, fontweight='bold')
+# 6.2 Correlation Heatmap
+ax2 = fig.add_subplot(4, 2, 2)
+sns.heatmap(correlation_matrix, annot=True, cmap='RdBu_r', center=0, 
+            fmt='.2f', linewidths=0.5, ax=ax2)
+ax2.set_title('Correlation Matrix Heatmap', fontsize=14, fontweight='bold')
 plt.tight_layout()
-plt.savefig('05_correlation_heatmap.png', dpi=150, bbox_inches='tight')
-plt.show()
+plt.savefig('correlation_heatmap.png', dpi=150, bbox_inches='tight')
+print("Saved: correlation_heatmap.png")
 
-target_corr = correlation_matrix['DEFECT_LABEL'].drop('DEFECT_LABEL').sort_values(key=abs, ascending=False)
-print(f"\nTop Features Correlated with DEFECT_LABEL:")
-for feat, corr in target_corr.head(5).items():
-    print(f"  {feat}: r = {corr:.3f}")
-
-fig, ax = plt.subplots(figsize=(10, 6))
-colors = ['darkgreen' if x > 0 else 'darkred' for x in target_corr.values]
-target_corr.plot(kind='barh', color=colors, ax=ax)
-ax.set_title('Feature Correlation with DEFECT_LABEL', fontsize=14, fontweight='bold')
-ax.set_xlabel('Correlation Coefficient')
-ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8)
+# 6.3 Box Plots for Outlier Detection
+ax3 = fig.add_subplot(4, 2, 3)
+df_processed.boxplot(ax=ax3, vert=True, figsize=(16, 10))
+ax3.set_title('Box Plots (Outlier Visualization)', fontsize=14, fontweight='bold')
+ax3.set_xticklabels(ax3.get_xticklabels(), rotation=45, ha='right')
 plt.tight_layout()
-plt.savefig('06_target_correlation.png', dpi=150, bbox_inches='tight')
-plt.show()
+plt.savefig('boxplots_outliers.png', dpi=150, bbox_inches='tight')
+print("Saved: boxplots_outliers.png")
 
-# STEP 4: FEATURE SELECTION
-
-print("STEP 4: FEATURE SELECTION")
-
-X = df_clean.drop('DEFECT_LABEL', axis=1)
-y = df_clean['DEFECT_LABEL']
-
-f_selector = SelectKBest(score_func=f_classif, k='all')
-f_selector.fit(X, y)
-f_scores = pd.DataFrame({'Feature': X.columns, 'F_Score': f_selector.scores_, 'P_Value': f_selector.pvalues_})
-
-mi_selector = SelectKBest(score_func=mutual_info_classif, k='all')
-mi_selector.fit(X, y)
-mi_scores = pd.DataFrame({'Feature': X.columns, 'MI_Score': mi_selector.scores_})
-
-rf = RandomForestClassifier(n_estimators=100, random_state=42)
-rf.fit(X, y)
-rf_scores = pd.DataFrame({'Feature': X.columns, 'Importance': rf.feature_importances_})
-
-combined_scores = f_scores[['Feature', 'F_Score']].merge(mi_scores, on='Feature').merge(rf_scores, on='Feature')
-scaler = MinMaxScaler()
-combined_scores[['F_Score_Norm', 'MI_Score_Norm', 'Importance_Norm']] = scaler.fit_transform(
-    combined_scores[['F_Score', 'MI_Score', 'Importance']])
-combined_scores['Average_Score'] = combined_scores[['F_Score_Norm', 'MI_Score_Norm', 'Importance_Norm']].mean(axis=1)
-combined_scores = combined_scores.sort_values('Average_Score', ascending=False)
-
-print("\nCombined Feature Ranking:")
-print(combined_scores[['Feature', 'Average_Score']])
-
-fig, ax = plt.subplots(figsize=(12, 8))
-x = np.arange(len(combined_scores))
-width = 0.25
-ax.bar(x - width, combined_scores['F_Score_Norm'], width, label='ANOVA F-test', color='steelblue')
-ax.bar(x, combined_scores['MI_Score_Norm'], width, label='Mutual Information', color='coral')
-ax.bar(x + width, combined_scores['Importance_Norm'], width, label='Random Forest', color='mediumseagreen')
-ax.set_xlabel('Features')
-ax.set_ylabel('Normalized Score')
-ax.set_title('Feature Selection: Comparison of Methods', fontsize=14, fontweight='bold')
-ax.set_xticks(x)
-ax.set_xticklabels(combined_scores['Feature'], rotation=45, ha='right')
-ax.legend()
+# 6.4 Target Correlation Bar Chart
+ax4 = fig.add_subplot(4, 2, 4)
+colors = ['green' if x > 0 else 'red' for x in target_correlations]
+target_correlations.plot(kind='barh', ax=ax4, color=colors)
+ax4.set_title('Feature Correlation with DEFECT_LABEL', fontsize=14, fontweight='bold')
+ax4.set_xlabel('Correlation Coefficient')
+ax4.axvline(x=0, color='black', linestyle='--', linewidth=0.5)
 plt.tight_layout()
-plt.savefig('07_feature_selection_comparison.png', dpi=150, bbox_inches='tight')
-plt.show()
+plt.savefig('target_correlation.png', dpi=150, bbox_inches='tight')
+print("Saved: target_correlation.png")
 
-k = 7
-top_features = combined_scores.head(k)['Feature'].tolist()
-print(f"\nTop {k} Selected Features: {top_features}")
-
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.barh(combined_scores.head(k)['Feature'], combined_scores.head(k)['Average_Score'], color='teal')
-ax.set_xlabel('Average Normalized Score')
-ax.set_title(f'Top {k} Selected Features', fontsize=14, fontweight='bold')
+# 6.5 Pairplot for top features (using figure-level function)
+top_features = ['LOC', 'CYCLO', 'DIFFICULTY', 'DEFECT_LABEL']
+pairfig = sns.pairplot(df_processed[top_features], hue='DEFECT_LABEL', diag_kind='kde')
+pairfig.fig.suptitle('Pairplot for Top Features', fontsize=14, fontweight='bold', y=1.02)
 plt.tight_layout()
-plt.savefig('08_top_features.png', dpi=150, bbox_inches='tight')
-plt.show()
+pairfig.savefig('pairplot_top_features.png', dpi=150, bbox_inches='tight')
+print("Saved: pairplot_top_features.png")
+
+# 6.6 Feature Importance Plot
+ax6 = fig.add_subplot(4, 2, 6)
+importance_df_sorted = importance_df.sort_values('p_value')
+colors = ['green' if p < 0.05 else 'red' for p in importance_df_sorted['p_value']]
+ax6.barh(importance_df_sorted.index, -np.log10(importance_df_sorted['p_value']), color=colors)
+ax6.set_xlabel('-log10(p-value)')
+ax6.set_title('Feature Importance (Statistical Significance)', fontsize=14, fontweight='bold')
+ax6.axvline(x=-np.log10(0.05), color='black', linestyle='--', label='p=0.05')
+ax6.legend()
+plt.tight_layout()
+plt.savefig('feature_importance.png', dpi=150, bbox_inches='tight')
+print("Saved: feature_importance.png")
+
+# 6.7 Class Distribution
+ax7 = fig.add_subplot(4, 2, 7)
+class_counts = df_processed['DEFECT_LABEL'].value_counts()
+ax7.pie(class_counts, labels=['Non-defective', 'Defective'], autopct='%1.1f%%',
+        colors=['lightgreen', 'salmon'], explode=(0.05, 0.05))
+ax7.set_title('Class Distribution', fontsize=14, fontweight='bold')
+plt.tight_layout()
+plt.savefig('class_distribution.png', dpi=150, bbox_inches='tight')
+print("Saved: class_distribution.png")
+
+# 6.8 Correlation with Target - Sorted
+ax8 = fig.add_subplot(4, 2, 8)
+sorted_corr = target_correlations.sort_values()
+colors = ['red' if x < 0 else 'blue' for x in sorted_corr]
+sorted_corr.plot(kind='barh', ax=ax8, color=colors)
+ax8.set_title('Sorted Correlations with DEFECT_LABEL', fontsize=14, fontweight='bold')
+ax8.set_xlabel('Correlation')
+ax8.axvline(x=0, color='black', linestyle='--', linewidth=0.5)
+plt.tight_layout()
+plt.savefig('sorted_correlations.png', dpi=150, bbox_inches='tight')
+print("Saved: sorted_correlations.png")
+
+plt.savefig('all_visualizations.png', dpi=150, bbox_inches='tight')
+print("\n Saved: all_visualizations.png")
